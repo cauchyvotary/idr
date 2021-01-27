@@ -1,7 +1,7 @@
 import numpy as np
 import imageio
 import skimage
-import cv2
+# import cv2
 import torch
 from torch.nn import functional as F
 
@@ -22,6 +22,28 @@ def load_mask(path):
 
     return object_mask
 
+def QRdecompose(A: np.array):
+    QQt = A @ A.T
+    s = np.sqrt(QQt[2, 2])
+    cy = QQt[1, 2] / s
+    cx = QQt[0, 2] / s
+    fy = np.sqrt(QQt[1, 1] - cy * cy)
+    sx = (QQt[0, 1] - cx * cy) / fy
+    fx = np.sqrt(QQt[0, 0] - cx * cx - sx * sx)
+
+    Q = np.array([[fx, sx, cx], [0, fy, cy], [0, 0, s]], dtype=np.float32)
+    R = np.linalg.inv(Q).dot(A)
+
+    return Q, R
+
+def decomposeProjectionMatrix(P):
+    KR = P[:, 0:3]
+    K, R = QRdecompose(KR)
+    t = np.linalg.inv(K).dot(P[:, 3])  # world to camera, transfer to camera-2-world like opencv
+    pos = np.concatenate((-R.T.dot(t), [1]))[:, None]
+
+    return K, R, pos
+
 def load_K_Rt_from_P(filename, P=None):
     if P is None:
         lines = open(filename).read().splitlines()
@@ -30,13 +52,14 @@ def load_K_Rt_from_P(filename, P=None):
         lines = [[x[0], x[1], x[2], x[3]] for x in (x.split(" ") for x in lines)]
         P = np.asarray(lines).astype(np.float32).squeeze()
 
-    out = cv2.decomposeProjectionMatrix(P)
+    # out = cv2.decomposeProjectionMatrix(P)
+    out = decomposeProjectionMatrix(P)
     K = out[0]
     R = out[1]
     t = out[2]
 
     K = K/K[2,2]
-    intrinsics = np.eye(4)
+    intrinsics = np.eye(4, dtype=np.float32)
     intrinsics[:3, :3] = K
 
     pose = np.eye(4, dtype=np.float32)
